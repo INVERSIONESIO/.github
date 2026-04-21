@@ -1,2 +1,2 @@
-# Todos los archivos requieren aprobación de tech-leads Y qa-team para PRs a main
-* @INVERSIONESIO/tech-leads @INVERSIONESIO/qa-team
+# Aprobación de tech-leads requerida para PRs a main (aplica a todos los repos)
+* @INVERSIONESIO/tech-leads
