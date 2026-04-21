@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      statuses: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,3 +43,26 @@ jobs:
           fi
 
           echo "✅ Todos los commits de feature están en dev"
+
+      - name: Propagate deploy status if available
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request.head.sha;
+            const { data: devRef } = await github.rest.git.getRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: 'heads/dev'
+            });
+            const { data: statuses } = await github.rest.repos.listCommitStatusesForRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: devRef.object.sha
+            });
+            const deployed = statuses.find(s => s.context === 'Deploy exitoso (dev)' && s.state === 'success');
+            if (deployed) {
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner, repo: context.repo.repo, sha,
+                state: 'success', context: 'Deploy exitoso (dev)',
+                description: 'Dev desplegado — propagado por gate-qas'
+              });
+              core.info(`✅ Deploy status propagado a ${sha.substring(0, 7)}`);
+            } else {
+              core.info('Deploy de dev aún no completado. El deploy lo propagará cuando termine.');
+            }
