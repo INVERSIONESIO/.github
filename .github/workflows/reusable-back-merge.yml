@@ -1,0 +1,106 @@
+name: Back-merge after hotfix (reusable)
+
+on:
+  workflow_call:
+    secrets:
+      token:
+        description: 'GitHub token with contents:write permission'
+        required: false
+
+jobs:
+  backmerge:
+    name: Back-merge hotfix to qas and dev
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check if hotfix merge
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha
+            });
+            const hotfixPr = prs.find(pr =>
+              pr.merged_at &&
+              pr.base.ref === 'main' &&
+              pr.labels.some(l => l.name === 'hotfix-emergency')
+            );
+            if (hotfixPr) {
+              core.setOutput('is_hotfix', 'true');
+              core.setOutput('pr_number', hotfixPr.number.toString());
+              core.info(`Hotfix PR #${hotfixPr.number} detectado. Iniciando back-merge.`);
+            } else {
+              core.setOutput('is_hotfix', 'false');
+              core.info('No es un hotfix, omitiendo back-merge.');
+            }
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.is_hotfix == 'true'
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        if: steps.check.outputs.is_hotfix == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Back-merge to qas
+        if: steps.check.outputs.is_hotfix == 'true'
+        id: merge_qas
+        continue-on-error: true
+        run: |
+          git checkout qas
+          git merge origin/main --no-ff -m 'chore: back-merge hotfix to qas'
+          git push origin qas
+
+      - name: Create PR if qas back-merge failed
+        if: steps.check.outputs.is_hotfix == 'true' && steps.merge_qas.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = process.env.PR_NUMBER;
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'chore: back-merge hotfix to qas (conflicto manual)',
+              head: 'main',
+              base: 'qas',
+              body: `El back-merge automatico del hotfix fallo por conflictos.\n\nResolver manualmente y mergear este PR.\n\nHotfix PR: #${prNumber}`
+            });
+            core.warning(`Back-merge a qas requiere resolucion manual: ${pr.html_url}`);
+        env:
+          PR_NUMBER: ${{ steps.check.outputs.pr_number }}
+
+      - name: Back-merge to dev
+        if: steps.check.outputs.is_hotfix == 'true'
+        id: merge_dev
+        continue-on-error: true
+        run: |
+          git checkout dev
+          git merge origin/main --no-ff -m 'chore: back-merge hotfix to dev'
+          git push origin dev
+
+      - name: Create PR if dev back-merge failed
+        if: steps.check.outputs.is_hotfix == 'true' && steps.merge_dev.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = process.env.PR_NUMBER;
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'chore: back-merge hotfix to dev (conflicto manual)',
+              head: 'main',
+              base: 'dev',
+              body: `El back-merge automatico del hotfix fallo por conflictos.\n\nResolver manualmente y mergear este PR.\n\nHotfix PR: #${prNumber}`
+            });
+            core.warning(`Back-merge a dev requiere resolucion manual: ${pr.html_url}`);
+        env:
+          PR_NUMBER: ${{ steps.check.outputs.pr_number }}

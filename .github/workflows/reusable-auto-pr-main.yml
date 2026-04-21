@@ -1,0 +1,66 @@
+name: Auto PR to main (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  create-pr:
+    name: Create PR to main
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Create or update PR to main
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Find the most recently merged PR to qas
+            const { data: closedPrs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: 'qas',
+              state: 'closed',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 5
+            });
+
+            const mergedPr = closedPrs.find(pr =>
+              pr.merged_at &&
+              pr.merge_commit_sha === context.sha &&
+              !pr.head.ref.startsWith('main')
+            );
+
+            if (!mergedPr) {
+              core.info('No feature PR merged to qas found for this push, skipping.');
+              return;
+            }
+
+            const featureBranch = mergedPr.head.ref;
+
+            // Check if PR to main already exists
+            const { data: existingPrs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${featureBranch}`,
+              base: 'main',
+              state: 'open'
+            });
+
+            if (existingPrs.length > 0) {
+              core.info(`PR to main already exists: #${existingPrs[0].number}. Skipping.`);
+              return;
+            }
+
+            // Create new PR to main
+            const { data: newPr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: mergedPr.title,
+              head: featureBranch,
+              base: 'main',
+              body: `PR auto-generado al mergear a qas.\n\nFeature branch: \`${featureBranch}\`\nQAS PR: #${mergedPr.number}`
+            });
+
+            core.info(`PR #${newPr.number} creado a main.`);

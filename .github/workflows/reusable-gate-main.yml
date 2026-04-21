@@ -1,0 +1,52 @@
+name: Gate Main (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  gate-main:
+    name: gate-main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify commits are in qas
+        run: |
+          git fetch origin qas
+          PR_HEAD="${{ github.event.pull_request.head.sha }}"
+
+          if git merge-base --is-ancestor "$PR_HEAD" origin/qas; then
+            echo "✅ Los commits del PR están en qas"
+          else
+            echo "::error::❌ Los commits no están en qas. Primero mergea tu PR a qas."
+            exit 1
+          fi
+
+      - name: Verify qas deployed successfully
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/qas'
+            });
+            const qasHead = ref.object.sha;
+
+            const { data: statuses } = await github.rest.repos.listCommitStatusesForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: qasHead
+            });
+
+            const deployed = statuses.find(s => s.context === 'Deploy exitoso (qas)' && s.state === 'success');
+            if (deployed) {
+              core.info(`✅ QAS deployado exitosamente (${qasHead.substring(0, 7)})`);
+            } else {
+              core.setFailed('❌ No se encontró deploy exitoso en qas. Espera a que el deploy termine.');
+            }

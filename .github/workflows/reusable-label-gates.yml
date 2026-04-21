@@ -1,0 +1,75 @@
+name: Label Gates (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  handle-label:
+    name: handle-label
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Process gate event
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const action = context.payload.action;
+            const sha = context.payload.pull_request.head.sha;
+            const prNumber = context.payload.pull_request.number;
+            const sender = context.payload.sender.login;
+            const statusParams = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha
+            };
+            const issueParams = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber
+            };
+
+            // --- PR rebased/updated: carry over deploy statuses ---
+            if (action === 'synchronize') {
+              const beforeSha = context.payload.before;
+              if (!beforeSha) return;
+
+              const { data: oldStatuses } = await github.rest.repos.listCommitStatusesForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: beforeSha
+              });
+
+              for (const ctx of ['Deploy exitoso (dev)', 'Deploy exitoso (qas)']) {
+                const old = oldStatuses.find(s => s.context === ctx && s.state === 'success');
+                if (old) {
+                  await github.rest.repos.createCommitStatus({
+                    ...statusParams,
+                    state: 'success',
+                    context: ctx,
+                    description: `${old.description} (trasladado tras rebase)`
+                  });
+                  core.info(`Status '${ctx}' trasladado de ${beforeSha.substring(0,7)} a ${sha.substring(0,7)}`);
+                }
+              }
+              return;
+            }
+
+            const label = context.payload.label.name;
+
+            // --- hotfix-emergency label added ---
+            if (label === 'hotfix-emergency' && action === 'labeled') {
+              await github.rest.repos.createCommitStatus({
+                ...statusParams,
+                state: 'success',
+                context: 'Deploy exitoso (qas)',
+                description: 'Bypass por hotfix-emergency'
+              });
+              await github.rest.issues.createComment({
+                ...issueParams,
+                body: `🚨 **Hotfix bypass activado** por @${sender}. Gate de QAS omitido.`
+              });
+              core.warning('Hotfix bypass activado. Gate de QAS omitido.');
+            }

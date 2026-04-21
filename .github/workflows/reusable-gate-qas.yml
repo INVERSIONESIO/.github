@@ -1,0 +1,52 @@
+name: Gate QAS (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  gate-qas:
+    name: gate-qas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify commits are in dev
+        run: |
+          git fetch origin dev
+          PR_HEAD="${{ github.event.pull_request.head.sha }}"
+
+          if git merge-base --is-ancestor "$PR_HEAD" origin/dev; then
+            echo "✅ Los commits del PR están en dev"
+          else
+            echo "::error::❌ Los commits no están en dev. Primero mergea tu PR a dev."
+            exit 1
+          fi
+
+      - name: Verify dev deployed successfully
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/dev'
+            });
+            const devHead = ref.object.sha;
+
+            const { data: statuses } = await github.rest.repos.listCommitStatusesForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: devHead
+            });
+
+            const deployed = statuses.find(s => s.context === 'Deploy exitoso (dev)' && s.state === 'success');
+            if (deployed) {
+              core.info(`✅ Dev deployado exitosamente (${devHead.substring(0, 7)})`);
+            } else {
+              core.setFailed('❌ No se encontró deploy exitoso en dev. Espera a que el deploy termine.');
+            }

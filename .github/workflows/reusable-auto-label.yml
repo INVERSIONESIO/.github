@@ -1,0 +1,58 @@
+name: Auto-label PR (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  auto-label:
+    name: auto-label
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Label PR by target branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const base = pr.base.ref;
+
+            const labelMap = {
+              'dev': 'to-dev',
+              'qas': 'to-qas',
+              'main': 'to-main'
+            };
+
+            const label = labelMap[base];
+            if (!label) {
+              core.info(`Target branch '${base}' no tiene label asociado. Skipping.`);
+              return;
+            }
+
+            // Remove other to-* labels if present
+            const allLabels = ['to-dev', 'to-qas', 'to-main'];
+            const currentLabels = pr.labels.map(l => l.name);
+            for (const l of allLabels) {
+              if (l !== label && currentLabels.includes(l)) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name: l
+                });
+                core.info(`Label '${l}' removido.`);
+              }
+            }
+
+            // Add the correct label
+            if (!currentLabels.includes(label)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [label]
+              });
+              core.info(`Label '${label}' agregado al PR #${pr.number}.`);
+            } else {
+              core.info(`Label '${label}' ya existe en el PR.`);
+            }
