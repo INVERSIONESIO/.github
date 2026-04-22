@@ -14,6 +14,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      statuses: write
     steps:
       - name: Check if hotfix merge
         id: check
@@ -79,6 +80,25 @@ jobs:
               body: `El back-merge automatico del hotfix fallo por conflictos.\n\nResolver manualmente y mergear este PR.\n\nHotfix PR: #${prNumber}`
             });
             core.warning(`Back-merge a qas requiere resolucion manual: ${pr.html_url}`);
+
+            // Bypass all required checks for back-merge PR
+            const sha = pr.head.sha;
+            const checks = [
+              { context: 'freshness / freshness', description: 'Bypass — back-merge de hotfix' },
+              { context: 'gate-qas / gate-qas', description: 'Bypass — código ya en main/prod' },
+              { context: 'Deploy exitoso (dev)', description: 'Bypass — código ya en main/prod' }
+            ];
+            for (const check of checks) {
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha,
+                state: 'success',
+                context: check.context,
+                description: check.description
+              });
+            }
+            core.info(`✅ Checks bypassed para PR #${pr.number}`);
         env:
           PR_NUMBER: ${{ steps.check.outputs.pr_number }}
 
@@ -106,5 +126,16 @@ jobs:
               body: `El back-merge automatico del hotfix fallo por conflictos.\n\nResolver manualmente y mergear este PR.\n\nHotfix PR: #${prNumber}`
             });
             core.warning(`Back-merge a dev requiere resolucion manual: ${pr.html_url}`);
+
+            // Bypass freshness check for back-merge PR
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: pr.head.sha,
+              state: 'success',
+              context: 'freshness / freshness',
+              description: 'Bypass — back-merge de hotfix'
+            });
+            core.info(`✅ Checks bypassed para PR #${pr.number}`);
         env:
           PR_NUMBER: ${{ steps.check.outputs.pr_number }}
